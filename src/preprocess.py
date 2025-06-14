@@ -1,5 +1,6 @@
 import requests
 import os
+from tqdm import tqdm
 
 def download_squad_dataset():
     url_train = "https://rajpurkar.github.io/SQuAD-explorer/dataset/train-v1.1.json"
@@ -53,7 +54,7 @@ def process_split(split, nlp):
     spanissues = 0
     tokenissues = 0
     dataset = []
-    for article in split["data"]:
+    for article in tqdm(split["data"], desc="Processing articles"):
         for paragraph in article["paragraphs"]:
             context = paragraph["context"]
             context.replace("''",'" ') 
