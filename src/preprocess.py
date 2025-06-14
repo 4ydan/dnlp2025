@@ -107,10 +107,10 @@ def write_to_files(dataset, name):
     answer_tokens = []
     span_tokens = []
 
-    with open(context_file_path,"w") as context_f, \
-        open(question_file_path,"w") as question_f, \
-        open(answer_file_path,"w") as answer_f, \
-        open(span_file_path,"w") as span_f:
+    with open(context_file_path, "w", encoding="utf-8") as context_f, \
+        open(question_file_path, "w", encoding="utf-8") as question_f, \
+        open(answer_file_path, "w", encoding="utf-8") as answer_f, \
+        open(span_file_path, "w", encoding="utf-8") as span_f:
         
         for data in dataset: 
             (context, question, answer, span) = data
