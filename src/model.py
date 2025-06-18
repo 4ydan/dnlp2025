@@ -5,96 +5,64 @@ import torch.nn.functional as functional
 
 class Encoder(nn.Module):
     def __init__(self, hidden_dim, embedding_matrix, dropout_ratio):
-        super().__init__()
+        super(Encoder, self).__init__()
         self.hidden_dim = hidden_dim
         vocab_size, embedding_dim = embedding_matrix.shape
         embedding_tensor = torch.tensor(embedding_matrix, dtype=torch.float)
-        
         self.embedding = nn.Embedding.from_pretrained(embedding_tensor, freeze=True, padding_idx=0)
-        self.lstm = nn.LSTM(embedding_dim, hidden_dim, 1, batch_first=True, dropout=dropout_ratio)
         self.dropout = nn.Dropout(dropout_ratio)
+        self.encoder = nn.LSTM(
+            input_size=embedding_dim,
+            hidden_size=self.hidden_dim,
+            num_layers=1,
+            batch_first=True,
+            bidirectional=False
+        )
+        self.ques_projection = nn.Linear(self.hidden_dim, self.hidden_dim)
 
-        self.w = nn.Linear(hidden_dim, hidden_dim)
-        #self.b = nn.Parameter(torch.zeros(hidden_dim))
+        # Sentinel vectors
+        self.sentinel_c = nn.Parameter(torch.randn(self.hidden_dim))
+        self.sentinel_q = nn.Parameter(torch.randn(self.hidden_dim))
 
-        self.sentinel = nn.Parameter(torch.randn(1,hidden_dim))
-
-    def encode_sequence(self, idxs, lengths):
-        sorted_lens, sorted_idx = lengths.sort(descending=True)
-        _, orig_idx = sorted_idx.sort()
-
-        # Sort sequences for packing
-        idxs_sorted = idxs[sorted_idx]
-        emb = self.embedding(idxs_sorted)
-        packed = pack_padded_sequence(emb, sorted_lens.cpu(), batch_first=True, enforce_sorted=True)
-
-        # LSTM encoding
-        packed_out, _ = self.lstm(packed)
-        out, _ = pad_packed_sequence(packed_out, batch_first=True)  # [batch, max_len, hidden]
-        out = self.dropout(out)
-        out = out[orig_idx]  # restore original order
-
-        # Insert sentinel at end-of-sequence index for each example
-        batch_size = out.size(0)
-        sentinel_expanded = self.sentinel.expand(batch_size, 1, self.hidden_dim)  # [batch, 1, hidden]
-
-        out_with_sentinel = torch.cat([out, torch.zeros_like(sentinel_expanded)], dim=1)  # [batch, max_len+1, hidden]
-        lens = lengths.long().unsqueeze(1).unsqueeze(2).expand(-1, 1, self.hidden_dim)  # [batch, 1, hidden]
-        out_with_sentinel = out_with_sentinel.scatter(1, lens, sentinel_expanded)
-
-        return out_with_sentinel  # [batch, seq_len + 1, hidden]
-
-    def forward(self, doc_idxs, doc_lens, q_idxs, q_lens):
-
-        D = self.encode_sequence(doc_idxs, doc_lens)  # [batch, m+1, hidden]
-        Q_prime = self.encode_sequence(q_idxs, q_lens)  # [batch, n+1, hidden]
-
-        # Nonlinear projection: Q = tanh(W * Q′ + b)
-        Q = torch.tanh(self.w(Q_prime))  # [batch, n+1, hidden]
-
-        return D, Q       
-
-class BRNN(nn.Module):
-    def __init__(self, num_layers, hidden_dim, dropout_ratio):
-        super(BRNN, self).__init__()
-        self.num_layers = num_layers
-        self.hidden_dim = hidden_dim
-        self.lstm = nn.LSTM(3 * hidden_dim, hidden_dim, 1, batch_first=True, bidirectional=True, dropout=dropout_ratio)
-        self.dropout = nn.Dropout(p=dropout_ratio)
+    def forward(self, context_ids, question_ids, context_lengths, question_lengths):
+        batch_size = context_ids.size(0)
         
-    def forward(self, x):
-        h0 = torch.zeros(self.num_layers*2, x.size(0), self.hidden_dim).to(x.device)
-        c0 = torch.zeros(self.num_layers*2, x.size(0), self.hidden_dim).to(x.device)
-        
-        out, _ = self.lstm(x, (h0, c0))
-        out = self.dropout(out)
-        return out
+        # Sort context
+        context_lengths, perm_index_C = context_lengths.sort(descending=True)
+        context_ids = context_ids[perm_index_C]
 
-class CoattentionEncoder(nn.Module):
-    def __init__(self, hidden_size, num_layers=1):
-        super().__init__()
-        self.hidden_size = hidden_size
+        # Sort question
+        question_lengths, perm_index_Q = question_lengths.sort(descending=True)
+        question_ids = question_ids[perm_index_Q]
 
-        self.brnn = BRNN(input_size=3 * hidden_size,
-                         hidden_size=hidden_size,
-                         num_layers=num_layers)
+        # Embeddings
+        context_emb = self.dropout(self.embedding(context_ids))
+        question_emb = self.dropout(self.embedding(question_ids))
 
-    #2.2 Coattention Encoder
-    def forward(self, D, Q):
-        #Affinity matrix
-        L = torch.bmm(Q, torch.transpose(D, 1, 2)) 
+        # Pack sequences
+        packed_context = pack_padded_sequence(context_emb, lengths=context_lengths.view(-1).cpu(), batch_first=True, enforce_sorted=True)
+        packed_question = pack_padded_sequence(question_emb, lengths=question_lengths.view(-1).cpu(), batch_first=True, enforce_sorted=True)
 
-        #Attention weights
-        AQ = functional.softmax(L, dim=1)         
-        AD = functional.softmax(torch.transpose(L, 1, 2), dim=1)  
+        # Encode
+        packed_context_output, _ = self.encoder(packed_context)
+        D, _ = pad_packed_sequence(packed_context_output, batch_first=True)
+        D = D.contiguous()
 
-        #Context Summaries
-        CQ = torch.bmm(AQ, D) 
-        Q_combined = torch.cat([Q, CQ], dim=2)   
-        CD = torch.bmm(AD, Q_combined)
+        packed_question_output, _ = self.encoder(packed_question)
+        Q_intermediate, _ = pad_packed_sequence(packed_question_output, batch_first=True)
+        Q_intermediate = Q_intermediate.contiguous()
 
-        #BRNN
-        return self.brnn(torch.cat([D, CD], dim=2)) 
+        # Project question
+        Q = torch.tanh(self.ques_projection(Q_intermediate))
+
+        # Append sentinel vectors
+        sentinel_c = self.sentinel_c.unsqueeze(0).expand(batch_size, self.hidden_dim).unsqueeze(1)
+        sentinel_q = self.sentinel_q.unsqueeze(0).expand(batch_size, self.hidden_dim).unsqueeze(1)
+
+        D = torch.cat((D, sentinel_c), dim=1)  # B x (m+1) x l
+        Q = torch.cat((Q, sentinel_q), dim=1)  # B x (n+1) x l
+
+        return D, Q
     
 class DynamicDecoder(nn.Module):
 
@@ -179,9 +147,9 @@ class DynamicDecoder(nn.Module):
             sum_losses = torch.sum(torch.stack(losses,1),1)
             avg_loss = sum_losses/self.max_steps
             loss = torch.mean(avg_loss)
-        print(f"DEBUG: Before return - type(loss): {type(loss)}, value: {loss}")
-        print(f"DEBUG: Before return - type(idx_s): {type(idx_s)}, value: {idx_s}")
-        print(f"DEBUG: Before return - type(idx_e): {type(idx_e)}, value: {idx_e}")
+        # print(f"DEBUG: Before return - type(loss): {type(loss)}, value: {loss}")
+        # print(f"DEBUG: Before return - type(idx_s): {type(idx_s)}, value: {idx_s}")
+        # print(f"DEBUG: Before return - type(idx_e): {type(idx_e)}, value: {idx_e}")
         return loss, idx_s, idx_e
     
 class MaxOutHighWay(nn.Module):
@@ -200,12 +168,12 @@ class MaxOutHighWay(nn.Module):
         #use view if dimensions dont match for cat
         r_in = self.w_d(torch.cat((h_i.view(-1,self.hidden_dim), u_s_e),1))
         r = functional.tanh(r_in)
-        print("r.shape after tanh: ",r.shape)
+        # print("r.shape after tanh: ",r.shape)
         r = r.unsqueeze(1).expand(b,m,self.hidden_dim).contiguous()
 
         m_t_1_in = torch.cat((U,r),2).view(-1, self.hidden_dim*3)
         m_t_1, _ = self.w_1(m_t_1_in).view(-1, self.hidden_dim, self.maxout_pool_size).max(2)
-        print("m_t_1 shape: ", m_t_1.shape)
+        # print("m_t_1 shape: ", m_t_1.shape)
 
         m_t_2, _ = self.w_2(m_t_1).view(-1, self.hidden_dim, self.maxout_pool_size).max(2)
 
@@ -221,6 +189,10 @@ class MaxOutHighWay(nn.Module):
             change_mask = (idx!=idx_prev)
 
         if target is not None:
+            max_valid_index = score.size(1) - 1
+            if (target > max_valid_index).any():
+                # print(f"Warning: Clamping {torch.sum(target > max_valid_index)} target indices out of bounds.")
+                target = torch.clamp(target, max=max_valid_index)
             loss = self.loss(score, target)
             loss = loss * change_mask.float()
         
@@ -234,38 +206,68 @@ class CoattentionModel(nn.Module):
         self.encoder = Encoder(hidden_dim, emb_matrix, dropout_ratio)
 
         self.q_proj = nn.Linear(hidden_dim, hidden_dim)
-        self.fusion_bilstm = BRNN(3*hidden_dim, hidden_dim, dropout_ratio) # TODO what is 3
-        self.decoder = DynamicDecoder(4*hidden_dim, hidden_dim, maxout_pool_size, max_dec_steps, dropout_ratio)
+        self.temporal_fusion = nn.LSTM(3 * hidden_dim, hidden_dim, batch_first=True, bidirectional=True)
+        self.dynamic_decoder = DynamicDecoder(4 * hidden_dim, hidden_dim, maxout_pool_size, max_dec_steps, dropout_ratio)
         self.dropout = nn.Dropout(p=dropout_ratio)
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     def forward(self, d_seq, d_lens, q_seq, q_lens, span=None):
-        D, Q = self.encoder(d_seq, d_lens, q_seq, q_lens)
+        D, Q = self.encoder(d_seq, q_seq, d_lens, q_lens)
 
-        #project q
+        # project q
         Q = torch.tanh(self.q_proj(Q.view(-1, self.hidden_dim))).view(Q.size()) #B x n + 1 x l
 
-        #co attention
-        D_t = torch.transpose(D, 1, 2) #B x l x m + 1
+        # Co attention
+        D_t = D.transpose(1, 2) #B x l x m + 1
         L = torch.bmm(Q, D_t) # L = B x n + 1 x m + 1
 
+        # Attention weights for question
         A_Q_ = torch.softmax(L, dim=1) # B x n + 1 x m + 1
-        A_Q = torch.transpose(A_Q_, 1, 2) # B x m + 1 x n + 1
+        A_Q = A_Q_.transpose(1, 2) # B x m + 1 x n + 1
         C_Q = torch.bmm(D_t, A_Q) # (B x l x m + 1) x (B x m x n + 1) => B x l x n + 1
 
-        Q_t = torch.transpose(Q, 1, 2)  # B x l x n + 1
+        # Attention weights for document
+        Q_t = Q.transpose(1, 2)  # B x l x n + 1
         A_D = torch.softmax(L, dim=2)  # B x n + 1 x m + 1
-        C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D) # (B x l x n+1 ; B x l x n+1) x (B x n +1x m+1) => B x 2l x m + 1
+        
+        C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D) # B x 2l x m+1
+        C_D_t = C_D.transpose(1, 2)  # B x m + 1 x 2l
 
-        C_D_t = torch.transpose(C_D, 1, 2)  # B x m + 1 x 2l
-
-        #fusion BiLSTM
+        # fusion of temporal information to the coattention context via a bidirectional LSTM
         bilstm_in = torch.cat((C_D_t, D), 2) # B x m + 1 x 3l
-        bilstm_in = self.dropout(bilstm_in)
-        #?? should it be d_lens + 1 and get U[:-1]
-        U = self.fusion_bilstm(bilstm_in, d_mask) #B x m x 2l
+        # Exclude the sentinel vector from further computation
+        bilstm_in = bilstm_in[:, :-1, :]
+        packed_bilstm_in = pack_padded_sequence(bilstm_in, lengths=d_lens.cpu(), batch_first=True, enforce_sorted=False)
+        packed_U, (_) = self.temporal_fusion(packed_bilstm_in)
+        U, (_) = pad_packed_sequence(packed_U, batch_first=True)
 
-        loss, idx_s, idx_e = self.decoder(U, d_mask, span)
-        if span is not None:
-            return loss, idx_s, idx_e
+        # === SANITY CHECKS ===
+
+        # 1. Check U shape: [batch_size, seq_len, hidden_dim]
+        assert U.dim() == 3, f"U must be 3D but got shape {U.shape}"
+
+        b, seq_len, hidden_dim = U.shape
+        assert b == d_lens.size(0), f"Batch size mismatch: U batch {b}, d_lens batch {d_lens.size(0)}"
+
+        # 2. Check d_lens is 1D, and dtype is long or int
+        assert d_lens.dim() == 1, f"d_lens must be 1D but got {d_lens.shape}"
+        assert d_lens.dtype in [torch.int32, torch.int64], f"d_lens must be integer type but got {d_lens.dtype}"
+
+        # 3. Check device consistency
+        assert U.device == d_lens.device, f"U device {U.device} != d_lens device {d_lens.device}"
+
+        # 4. Check padding mask shape will match U sequence length
+        #    d_lens max must not exceed seq_len
+        max_len = d_lens.max().item()
+        assert max_len <= seq_len, f"d_lens max {max_len} cannot be larger than U seq_len {seq_len}"
+
+        context_pad_mask = (torch.arange(seq_len).unsqueeze(0).to(U.device) < d_lens.unsqueeze(1)).float()
+
+        # Check context_pad_mask shape matches U batch and seq length
+        assert context_pad_mask.shape == (b, seq_len), f"context_pad_mask shape {context_pad_mask.shape} invalid"
+
+        loss, start_pred, end_pred = self.dynamic_decoder(U, context_pad_mask, span)
+        if self.training:
+            return loss
         else:
-            return idx_s, idx_e
+            return start_pred, end_pred
