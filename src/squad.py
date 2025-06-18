@@ -2,8 +2,9 @@ import os
 import torch
 from torch.utils.data import Dataset
 from src.config import DCNConfig
+from datasets import load_dataset
+import re
 
-config = DCNConfig()
 
 class SquadDataset(Dataset):
     """
@@ -15,7 +16,8 @@ class SquadDataset(Dataset):
         constructor function
         """
         super(SquadDataset, self).__init__()
-
+        
+        self.config = DCNConfig()
         self.context_data = []
         self.question_data = []
         self.answer_data = []
@@ -23,28 +25,20 @@ class SquadDataset(Dataset):
         
         # Use the global word2idx dictionary from your preprocessing
         self.word2idx = word2idx
-        
-        # Determine file paths based on split
-        prefix = "train" if split == "train" else "eval"
-        context_path = os.path.join(config.data_dir, f"{prefix}.context")
-        question_path = os.path.join(config.data_dir, f"{prefix}.question")
-        answer_path = os.path.join(config.data_dir, f"{prefix}.answer")
-        span_path = os.path.join(config.data_dir, f"{prefix}.span")
-        
-        # Read each file line-by-line
-        with open(context_path, 'r', encoding='utf-8') as f:
-            self.context_data.extend([line.strip() for line in f if line.strip()])
 
-        with open(question_path, 'r', encoding='utf-8') as f:
-            self.question_data.extend([line.strip() for line in f if line.strip()])
+        # load squad dataset from huggingface
+        squad_dataset = load_dataset("squad")["train"]
 
-        with open(answer_path, 'r', encoding='utf-8') as f:
-            self.answer_data.extend([line.strip() for line in f if line.strip()])
+        # store raw contexts, questions, and answer spans as strings
+        self.context_data = [example["context"] for example in squad_dataset]
+        self.quesiton_data = [example["question"] for example in squad_dataset]
 
-        with open(span_path, 'r', encoding='utf-8') as f:
-            self.answer_span_data.extend([
-                [int(x) for x in line.strip().split()] for line in f if line.strip()
-            ])
+        # for answer span, store first answer_start as int, convert to string for LT in __getitem__
+        self.answer_span_data = [
+            (example["answers"]["answer_start"][0], example["answers"]["answer_start"][0] + len(example["answers"]["text"][0]))
+            if example["answers"]["answer_start"] and example["answers"]["text"] else (0, 1)
+            for example in squad_dataset
+        ]
 
     def __len__(self):
         return len(self.answer_span_data)
@@ -56,44 +50,33 @@ class SquadDataset(Dataset):
 
         token_ids = token_ids + (max_len - sent_len) * [0]  # Use 0 for <PAD>
         return token_ids
+    
+    def simple_tokenize(self, text):
+        return re.findall(r"\w+|[^\w\s]", text.lower(), re.UNICODE)
 
-    def tokens_to_ids(self, tokens, max_len):
-        """
-        Convert tokens to token ids using the word2idx dictionary
-        """
-        token_ids = []
-        for token in tokens:
-            if token.lower() in self.word2idx:
-                token_ids.append(self.word2idx[token.lower()])
-            else:
-                token_ids.append(self.word2idx["<UNK>"])  # Use 1 for <UNK>
-        
-        padded_token_ids = self._padding(token_ids, max_len=max_len)
-        return padded_token_ids, len(token_ids)
+    def sentence_tokenids(self, sentence, max_len):
+        tokens = self.simple_tokenize(sentence)
+        token_ids = [self.word2idx.get(word, 0) for word in tokens]
+        padded = self._padding(token_ids, max_len)
+        return padded, min(len(token_ids), max_len)
 
     def __getitem__(self, index):
-        """
-        Get item at index
-        """
-        # Get tokenized data (already lists of tokens)
-        context_tokens = self.context_data[index]
-        question_tokens = self.question_data[index]
-        answer_tokens = self.answer_data[index]
-        answer_span = self.answer_span_data[index]
-        
-        # Convert tokens to IDs
-        context_ids, context_len = self.tokens_to_ids(
-            context_tokens, max_len=config.context_len)
-        question_ids, question_len = self.tokens_to_ids(
-            question_tokens, max_len=config.question_len)
-        
-        # Convert span to start and end indices
-        start_idx, end_idx = answer_span
-        
-        return (
-            torch.LongTensor(context_ids), 
-            torch.LongTensor([context_len]), 
-            torch.LongTensor(question_ids), 
-            torch.LongTensor([question_len]), 
-            torch.LongTensor([start_idx, end_idx])
-        )
+            """
+            """
+            context = self.context_data[index]
+            context_ids, context_len = self.sentence_tokenids(
+                context, max_len=self.config.context_len)
+            question = self.quesiton_data[index]
+            question_ids, question_len = self.sentence_tokenids(
+                question, max_len=self.config.question_len)
+            
+            start_idx, end_idx = self.answer_span_data[index]
+            answer_span = torch.LongTensor([start_idx, end_idx])
+
+            return (
+                 torch.LongTensor(context_ids),
+                 torch.LongTensor([context_len]),
+                 torch.LongTensor(question_ids),
+                 torch.LongTensor([question_len]),
+                 answer_span
+            )
