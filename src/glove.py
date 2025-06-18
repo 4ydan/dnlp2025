@@ -218,8 +218,9 @@ class GloVeEmbeddings:
             vocab.update(question_words)
             
             # Add words from answers
-            for answer in example.get('answers', []):
-                answer_words = answer['text'].lower().split()
+            answer_texts = example.get('answers', {}).get('text', [])
+            for answer_text in answer_texts:
+                answer_words = answer_text.lower().split()
                 vocab.update(answer_words)
         
         self.logger.info(f"Built vocabulary with {len(vocab)} unique words from SQuAD data")
