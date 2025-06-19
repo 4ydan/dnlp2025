@@ -66,11 +66,12 @@ class Encoder(nn.Module):
     
 class DynamicDecoder(nn.Module):
 
-    def __init__(self, input_size, hidden_dim, maxout_pool_size, max_steps, dropout_ratio):
+    def __init__(self, input_size, hidden_dim, maxout_pool_size, max_steps, dropout_ratio=0.0):
         super().__init__()
         self.max_steps = max_steps
         self.lstm = nn.LSTM(input_size, hidden_dim, 1, batch_first=True)
 
+        self.dropout = nn.Dropout(p=dropout_ratio)
         self.maxout_start = MaxOutHighWay(hidden_dim, maxout_pool_size, dropout_ratio)
         self.maxout_end = MaxOutHighWay(hidden_dim, maxout_pool_size, dropout_ratio)
 
@@ -161,6 +162,7 @@ class MaxOutHighWay(nn.Module):
         self.w_1 = nn.Linear(3 * hidden_dim, hidden_dim*maxout_pool_size)
         self.w_2 = nn.Linear(hidden_dim, hidden_dim*maxout_pool_size)
         self.w_3 = nn.Linear(2 * hidden_dim, hidden_dim*maxout_pool_size)
+        self.dropout = nn.Dropout(p=dropout_ratio)
         self.loss = nn.CrossEntropyLoss()
 
     def forward(self, h_i, U, u_s_e, pad_mask, idx_prev, change_mask, target=None):
@@ -199,7 +201,7 @@ class MaxOutHighWay(nn.Module):
         return idx, change_mask, loss
 
 class CoattentionModel(nn.Module):
-    def __init__(self, hidden_dim, maxout_pool_size, emb_matrix, max_dec_steps, dropout_ratio):
+    def __init__(self, hidden_dim, maxout_pool_size, emb_matrix, max_dec_steps, dropout_ratio = 0.0):
         super(CoattentionModel, self).__init__()
         self.hidden_dim = hidden_dim
 
