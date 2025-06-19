@@ -212,9 +212,6 @@ class CoattentionModel(nn.Module):
         # Call encoder with masks
         D, Q = self.encoder(d_seq, d_mask, q_seq, q_mask)
 
-        # Call encoder with masks
-        D, Q = self.encoder(d_seq, d_mask, q_seq, q_mask)
-
         # project q
         Q = torch.tanh(self.q_proj(Q.view(-1, self.hidden_dim))).view(Q.size()) #B x n + 1 x l
 
@@ -241,31 +238,9 @@ class CoattentionModel(nn.Module):
         packed_bilstm_in = pack_padded_sequence(bilstm_in, lengths=d_lens.cpu(), batch_first=True, enforce_sorted=False)
         packed_U, (_) = self.temporal_fusion(packed_bilstm_in)
         U, (_) = pad_packed_sequence(packed_U, batch_first=True)
-
-        # === SANITY CHECKS ===
-
-        # 1. Check U shape: [batch_size, seq_len, hidden_dim]
-        assert U.dim() == 3, f"U must be 3D but got shape {U.shape}"
-
+        
         b, seq_len, hidden_dim = U.shape
-        assert b == d_lens.size(0), f"Batch size mismatch: U batch {b}, d_lens batch {d_lens.size(0)}"
-
-        # 2. Check d_lens is 1D, and dtype is long or int
-        assert d_lens.dim() == 1, f"d_lens must be 1D but got {d_lens.shape}"
-        assert d_lens.dtype in [torch.int32, torch.int64], f"d_lens must be integer type but got {d_lens.dtype}"
-
-        # 3. Check device consistency
-        assert U.device == d_lens.device, f"U device {U.device} != d_lens device {d_lens.device}"
-
-        # 4. Check padding mask shape will match U sequence length
-        #    d_lens max must not exceed seq_len
-        max_len = d_lens.max().item()
-        assert max_len <= seq_len, f"d_lens max {max_len} cannot be larger than U seq_len {seq_len}"
-
         context_pad_mask = self._lengths_to_mask(d_lens, seq_len).float()
-
-        # Check context_pad_mask shape matches U batch and seq length
-        assert context_pad_mask.shape == (b, seq_len), f"context_pad_mask shape {context_pad_mask.shape} invalid"
 
         loss, start_pred, end_pred = self.dynamic_decoder(U, context_pad_mask, span)
         return loss, start_pred, end_pred
