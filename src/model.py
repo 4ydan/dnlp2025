@@ -69,7 +69,7 @@ class DynamicDecoder(nn.Module):
     def __init__(self, input_size, hidden_dim, maxout_pool_size, max_steps, dropout_ratio):
         super().__init__()
         self.max_steps = max_steps
-        self.lstm = nn.LSTM(input_size, hidden_dim, 1, batch_first=True, dropout=dropout_ratio)
+        self.lstm = nn.LSTM(input_size, hidden_dim, 1, batch_first=True)
 
         self.maxout_start = MaxOutHighWay(hidden_dim, maxout_pool_size, dropout_ratio)
         self.maxout_end = MaxOutHighWay(hidden_dim, maxout_pool_size, dropout_ratio)

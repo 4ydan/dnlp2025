@@ -8,7 +8,11 @@ import re
 
 class SquadDataset(Dataset):
     """
-    Squad dataset
+    Constructor function that loads the specified SQuAD dataset split.
+    
+    Args:
+        word2idx (dict): A dictionary mapping words to indices.
+        split (str): The dataset split to load: "train" or "validation".
     """
 
     def __init__(self, word2idx, split="train"):
@@ -27,11 +31,15 @@ class SquadDataset(Dataset):
         self.word2idx = word2idx
 
         # load squad dataset from huggingface
-        squad_dataset = load_dataset("squad")["train"]
+        if split not in ["train", "validation"]:
+            raise ValueError(f"Invalid split: {split}. Choose 'train' or 'validation'.")
+
+        # Load the specified split of the SQuAD dataset
+        squad_dataset = load_dataset("squad")[split]
 
         # store raw contexts, questions, and answer spans as strings
         self.context_data = [example["context"] for example in squad_dataset]
-        self.quesiton_data = [example["question"] for example in squad_dataset]
+        self.question_data = [example["question"] for example in squad_dataset]
 
         # for answer span, store first answer_start as int, convert to string for LT in __getitem__
         self.answer_span_data = [
@@ -66,7 +74,7 @@ class SquadDataset(Dataset):
             context = self.context_data[index]
             context_ids, context_len = self.sentence_tokenids(
                 context, max_len=self.config.context_len)
-            question = self.quesiton_data[index]
+            question = self.question_data[index]
             question_ids, question_len = self.sentence_tokenids(
                 question, max_len=self.config.question_len)
             

@@ -62,17 +62,22 @@ class GloVeEmbeddings:
                 
                 values = line.split()
                 word = values[0]
+                vector_values = values[1:]
                 
+                # Skip malformed lines
+                if len(vector_values) != self.embedding_dim:
+                    print(f"Skipping line {line_idx} due to unexpected vector length: word: {word}, values length: {len(vector_values)}")
+                    continue
+
                 # Filter by vocabulary if provided
                 if vocab is not None and word not in vocab:
                     continue
                 
                 try:
-                    vector = np.array(values[1:], dtype=np.float32)
-                    if len(vector) == self.embedding_dim:
-                        self._add_word(word, vector)
+                    vector = np.array(vector_values, dtype=np.float32)
+                    self._add_word(word, vector)
                 except ValueError:
-                    continue
+                    print(f"ValueError occured when loading embeddings: word: {word}, len(vector_values): {len(vector_values)}")
         
         self._finalize_embeddings()
     
