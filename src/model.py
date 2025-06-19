@@ -107,7 +107,7 @@ class DynamicDecoder(nn.Module):
 
         for i in range(self.max_steps):
             #get previously computed end index coattention represenation
-            u_e_idx_prev = U[idxs, e_idx_prev, :]
+            u_e_idx_prev = U[idxs, e_idx_prev.long(), :]
             u_s_e = torch.cat((u_s_idx_prev, u_e_idx_prev), 1)
 
             lstm_out, decoder_state = self.lstm(u_s_e.unsqueeze(1), decoder_state)
