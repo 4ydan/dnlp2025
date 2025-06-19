@@ -60,7 +60,7 @@ class GloVeEmbeddings:
                 if line_idx % 100000 == 0:
                     self.logger.info(f"Processed {line_idx} lines")
                 
-                values = line.split()
+                values = line.split(' ')
                 word = values[0]
                 vector_values = values[1:]
                 
