@@ -38,10 +38,9 @@ class DCNConfig:
     reg_lambda: float = 0.00007
     
     # Logging and checkpointing
-    print_frequency: int = 100
-    print_every: int = 100
-    save_every: int = 50000000
-    eval_every: int = 1000
+    print_frequency: int = 100 # Print every 100 iterations
+    eval_frequency: int = 1 # Evaluate every epoch
+    # save_every: int = 50000000
     
     # Optional configurations
     seed: int = 42

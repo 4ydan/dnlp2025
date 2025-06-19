@@ -7,7 +7,7 @@ class Encoder(nn.Module):
     def __init__(self, hidden_dim, embedding_matrix, dropout_ratio):
         super(Encoder, self).__init__()
         self.hidden_dim = hidden_dim
-        vocab_size, embedding_dim = embedding_matrix.shape
+        _, embedding_dim = embedding_matrix.shape
         embedding_tensor = torch.tensor(embedding_matrix, dtype=torch.float)
         self.embedding = nn.Embedding.from_pretrained(embedding_tensor, freeze=True, padding_idx=0)
         self.dropout = nn.Dropout(dropout_ratio)
@@ -45,7 +45,7 @@ class Encoder(nn.Module):
 
         # Encode
         packed_context_output, _ = self.encoder(packed_context)
-        D, _ = pad_packed_sequence(packed_context_output, batch_first=True)
+        D, _ = pad_packed_sequence(packed_context_output, batch_first=True) # [batch, max_len, hidden]
         D = D.contiguous()
 
         packed_question_output, _ = self.encoder(packed_question)
@@ -59,8 +59,8 @@ class Encoder(nn.Module):
         sentinel_c = self.sentinel_c.unsqueeze(0).expand(batch_size, self.hidden_dim).unsqueeze(1)
         sentinel_q = self.sentinel_q.unsqueeze(0).expand(batch_size, self.hidden_dim).unsqueeze(1)
 
-        D = torch.cat((D, sentinel_c), dim=1)  # B x (m+1) x l
-        Q = torch.cat((Q, sentinel_q), dim=1)  # B x (n+1) x l
+        D = torch.cat((D, sentinel_c), dim=1)  # B x (m + 1) x l
+        Q = torch.cat((Q, sentinel_q), dim=1)  # B x (n + 1) x l
 
         return D, Q
     
@@ -233,7 +233,7 @@ class CoattentionModel(nn.Module):
         C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D) # B x 2l x m+1
         C_D_t = C_D.transpose(1, 2)  # B x m + 1 x 2l
 
-        # fusion of temporal information to the coattention context via a bidirectional LSTM
+        # Fusion of temporal information to the coattention context via a bidirectional LSTM
         bilstm_in = torch.cat((C_D_t, D), 2) # B x m + 1 x 3l
         # Exclude the sentinel vector from further computation
         bilstm_in = bilstm_in[:, :-1, :]
