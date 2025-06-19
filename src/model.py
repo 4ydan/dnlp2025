@@ -267,7 +267,3 @@ class CoattentionModel(nn.Module):
         assert context_pad_mask.shape == (b, seq_len), f"context_pad_mask shape {context_pad_mask.shape} invalid"
 
         loss, start_pred, end_pred = self.dynamic_decoder(U, context_pad_mask, span)
-        if self.training:
-            return loss
-        else:
-            return start_pred, end_pred
