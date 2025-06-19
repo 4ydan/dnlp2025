@@ -191,10 +191,6 @@ class MaxOutHighWay(nn.Module):
             change_mask = (idx!=idx_prev)
 
         if target is not None:
-            max_valid_index = score.size(1) - 1
-            if (target > max_valid_index).any():
-                # print(f"Warning: Clamping {torch.sum(target > max_valid_index)} target indices out of bounds.")
-                target = torch.clamp(target, max=max_valid_index)
             loss = self.loss(score, target)
             loss = loss * change_mask.float()
         
