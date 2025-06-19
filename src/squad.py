@@ -70,7 +70,7 @@ class SquadDataset(Dataset):
             example: A SQuAD dataset example containing 'context', 'answers', and tokenized data
             
         Returns:
-            dict: Contains original example data plus 'start_token' and 'end_token' indices
+            list: start and end token index
         """
         context = example['context']
         answers = example['answers']

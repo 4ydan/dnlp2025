@@ -5,63 +5,54 @@ import torch.nn.functional as functional
 
 class Encoder(nn.Module):
     def __init__(self, hidden_dim, embedding_matrix, dropout_ratio):
-        super(Encoder, self).__init__()
+        super().__init__()
         self.hidden_dim = hidden_dim
         _, embedding_dim = embedding_matrix.shape
         embedding_tensor = torch.tensor(embedding_matrix, dtype=torch.float)
+        
         self.embedding = nn.Embedding.from_pretrained(embedding_tensor, freeze=True, padding_idx=0)
+        self.lstm = nn.LSTM(embedding_dim, hidden_dim, 1, batch_first=True)
         self.dropout = nn.Dropout(dropout_ratio)
-        self.encoder = nn.LSTM(
-            input_size=embedding_dim,
-            hidden_size=self.hidden_dim,
-            num_layers=1,
-            batch_first=True,
-            bidirectional=False
-        )
-        self.ques_projection = nn.Linear(self.hidden_dim, self.hidden_dim)
-
+        
+        self.ques_projection = nn.Linear(hidden_dim, hidden_dim)
+        
         # Sentinel vectors
         self.sentinel_c = nn.Parameter(torch.randn(self.hidden_dim))
         self.sentinel_q = nn.Parameter(torch.randn(self.hidden_dim))
-
-    def forward(self, context_ids, question_ids, context_lengths, question_lengths):
-        batch_size = context_ids.size(0)
+    
+    def encode_sequence(self, idxs, mask, sentinel):
+        lengths = mask.sum(dim=1)  # [batch]
+        sorted_lens, sorted_idx = lengths.sort(descending=True)
+        _, orig_idx = sorted_idx.sort()
         
-        # Sort context
-        context_lengths, perm_index_C = context_lengths.sort(descending=True)
-        context_ids = context_ids[perm_index_C]
-
-        # Sort question
-        question_lengths, perm_index_Q = question_lengths.sort(descending=True)
-        question_ids = question_ids[perm_index_Q]
-
-        # Embeddings
-        context_emb = self.dropout(self.embedding(context_ids))
-        question_emb = self.dropout(self.embedding(question_ids))
-
-        # Pack sequences
-        packed_context = pack_padded_sequence(context_emb, lengths=context_lengths.view(-1).cpu(), batch_first=True, enforce_sorted=True)
-        packed_question = pack_padded_sequence(question_emb, lengths=question_lengths.view(-1).cpu(), batch_first=True, enforce_sorted=True)
-
-        # Encode
-        packed_context_output, _ = self.encoder(packed_context)
-        D, _ = pad_packed_sequence(packed_context_output, batch_first=True) # [batch, max_len, hidden]
-        D = D.contiguous()
-
-        packed_question_output, _ = self.encoder(packed_question)
-        Q_intermediate, _ = pad_packed_sequence(packed_question_output, batch_first=True)
-        Q_intermediate = Q_intermediate.contiguous()
-
-        # Project question
-        Q = torch.tanh(self.ques_projection(Q_intermediate))
-
-        # Append sentinel vectors
-        sentinel_c = self.sentinel_c.unsqueeze(0).expand(batch_size, self.hidden_dim).unsqueeze(1)
-        sentinel_q = self.sentinel_q.unsqueeze(0).expand(batch_size, self.hidden_dim).unsqueeze(1)
-
-        D = torch.cat((D, sentinel_c), dim=1)  # B x (m + 1) x l
-        Q = torch.cat((Q, sentinel_q), dim=1)  # B x (n + 1) x l
-
+        # Sort sequences for packing
+        idxs_sorted = idxs[sorted_idx]
+        emb = self.embedding(idxs_sorted)
+        packed = pack_padded_sequence(emb, sorted_lens.cpu(), batch_first=True, enforce_sorted=True)
+        
+        # LSTM encoding
+        packed_out, _ = self.lstm(packed)
+        out, _ = pad_packed_sequence(packed_out, batch_first=True)  # [batch, max_len, hidden]
+        out = self.dropout(out)
+        out = out[orig_idx]  # restore original order
+        
+        # Append sentinel
+        batch_size = out.size(0)
+        sentinel_expanded = sentinel.unsqueeze(0).expand(batch_size, 1, self.hidden_dim)
+        
+        out_with_sentinel = torch.cat([out, torch.zeros_like(sentinel_expanded)], dim=1)  # [batch, max_len+1, hidden]
+        lens = lengths.long().unsqueeze(1).unsqueeze(2).expand(-1, 1, self.hidden_dim)  # [batch, 1, hidden]
+        out_with_sentinel = out_with_sentinel.scatter(1, lens, sentinel_expanded)
+        
+        return out_with_sentinel # [batch, seq_len + 1, hidden]
+    
+    def forward(self, doc_idxs, doc_mask, q_idxs, q_mask):
+        D = self.encode_sequence(doc_idxs, doc_mask, self.sentinel_c)  # [batch, m+1, hidden]
+        Q_prime = self.encode_sequence(q_idxs, q_mask, self.sentinel_q)  # [batch, n+1, hidden]
+        
+        # Nonlinear projection: Q = tanh(W * Q′ + b)
+        Q = torch.tanh(self.ques_projection(Q_prime))  # [batch, n+1, hidden]
+        
         return D, Q
     
 class DynamicDecoder(nn.Module):
@@ -209,8 +200,20 @@ class CoattentionModel(nn.Module):
         self.dropout = nn.Dropout(p=dropout_ratio)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+    def _lengths_to_mask(self, lengths, max_len):
+        """Convert lengths to boolean mask."""
+        return torch.arange(max_len).unsqueeze(0).to(lengths.device) < lengths.unsqueeze(1)
+
     def forward(self, d_seq, d_lens, q_seq, q_lens, span=None):
-        D, Q = self.encoder(d_seq, q_seq, d_lens, q_lens)
+        # Convert lengths to masks
+        d_mask = self._lengths_to_mask(d_lens, d_seq.size(1))
+        q_mask = self._lengths_to_mask(q_lens, q_seq.size(1))
+        
+        # Call encoder with masks
+        D, Q = self.encoder(d_seq, d_mask, q_seq, q_mask)
+
+        # Call encoder with masks
+        D, Q = self.encoder(d_seq, d_mask, q_seq, q_mask)
 
         # project q
         Q = torch.tanh(self.q_proj(Q.view(-1, self.hidden_dim))).view(Q.size()) #B x n + 1 x l
@@ -259,7 +262,7 @@ class CoattentionModel(nn.Module):
         max_len = d_lens.max().item()
         assert max_len <= seq_len, f"d_lens max {max_len} cannot be larger than U seq_len {seq_len}"
 
-        context_pad_mask = (torch.arange(seq_len).unsqueeze(0).to(U.device) < d_lens.unsqueeze(1)).float()
+        context_pad_mask = self._lengths_to_mask(d_lens, seq_len).float()
 
         # Check context_pad_mask shape matches U batch and seq length
         assert context_pad_mask.shape == (b, seq_len), f"context_pad_mask shape {context_pad_mask.shape} invalid"
