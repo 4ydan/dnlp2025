@@ -1,7 +1,7 @@
 import os
 import torch
 from torch.utils.data import Dataset
-from src.config import DCNConfig
+from config import DCNConfig
 from datasets import load_dataset
 import re
 
@@ -44,6 +44,8 @@ class SquadDataset(Dataset):
         # store raw contexts, questions, and answer spans as strings
         self.context_data = [example["context"] for example in squad_dataset]
         self.question_data = [example["question"] for example in squad_dataset]
+        
+        self.qid_data = [example["id"] for example in squad_dataset]
 
         # Process answer spans to convert from character indices to token indices
         self.answer_span_data = [self._get_token_span(example) for example in squad_dataset]
@@ -135,11 +137,13 @@ class SquadDataset(Dataset):
         
         start_idx, end_idx = self.answer_span_data[index]
         answer_span = torch.LongTensor([start_idx, end_idx])
+        qid = self.qid_data[index]
 
         return (
                 torch.LongTensor(context_ids),
                 torch.LongTensor([context_len]),
                 torch.LongTensor(question_ids),
                 torch.LongTensor([question_len]),
-                answer_span
+                answer_span,
+                qid
         )
