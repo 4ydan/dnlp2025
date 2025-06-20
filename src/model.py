@@ -181,6 +181,7 @@ class MaxOutHighWay(nn.Module):
             idx_prev = idx_prev * change_mask.long()
             change_mask = (idx!=idx_prev)
 
+        loss = None
         if target is not None:
             loss = self.loss(score, target)
             loss = loss * change_mask.float()
