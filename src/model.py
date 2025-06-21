@@ -221,10 +221,14 @@ class CoattentionModel(nn.Module):
         self.dropout = nn.Dropout(p=dropout_ratio)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    def forward(self, d_seq, d_mask, q_seq, q_mask, span=None):
+    def _lengths_to_mask(self, lengths, max_len):
+        """Convert lengths to boolean mask."""
+        return torch.arange(max_len).unsqueeze(0).to(lengths.device) < lengths.unsqueeze(1)
+
+    def forward(self, d_seq, d_mask, q_seq, q_mask, d_lens, span=None):
         # Call encoder with masks
         D, Q = self.encoder(d_seq, d_mask, q_seq, q_mask)
-
+        
         # project q
         Q = torch.tanh(self.q_proj(Q.view(-1, self.hidden_dim))).view(Q.size()) #B x n + 1 x l
 
@@ -243,11 +247,13 @@ class CoattentionModel(nn.Module):
         
         C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D) # B x 2l x m+1
         C_D_t = C_D.transpose(1, 2)  # B x m + 1 x 2l
-
         #fusion BiLSTM
         bilstm_in = torch.cat((C_D_t, D), 2) # B x m + 1 x 3l
         bilstm_in = self.dropout(bilstm_in)
         U = self.fusion_bilstm(bilstm_in, d_mask) #B x m x 2l
 
-        loss, start_pred, end_pred = self.dynamic_decoder(U, d_mask, span)
+        _, seq_len, _ = U.shape
+        context_pad_mask = self._lengths_to_mask(d_lens, seq_len).float()
+        loss, start_pred, end_pred = self.dynamic_decoder(U, context_pad_mask, span)
+
         return loss, start_pred, end_pred
