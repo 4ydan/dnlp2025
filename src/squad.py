@@ -1,7 +1,7 @@
 import os
 import torch
 from torch.utils.data import Dataset
-from config import DCNConfig
+from src.config import DCNConfig
 from datasets import load_dataset
 import re
 
