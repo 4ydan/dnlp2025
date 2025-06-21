@@ -55,6 +55,26 @@ class Encoder(nn.Module):
         
         return D, Q
     
+class FusionBiLSTM(nn.Module):
+    def __init__(self, hidden_dim, dropout_ratio):
+        super(FusionBiLSTM, self).__init__()
+        self.fusion_bilstm = nn.LSTM(3 * hidden_dim, hidden_dim, 1, batch_first=True,
+                                     bidirectional=True, dropout=dropout_ratio)
+        self.dropout = nn.Dropout(p=dropout_ratio)
+
+    def forward(self, seq, mask):
+        lens = torch.sum(mask, 1)
+        lens_sorted, lens_argsort = torch.sort(lens, 0, True)
+        _, lens_argsort_argsort = torch.sort(lens_argsort, 0)
+        seq_ = torch.index_select(seq, 0, lens_argsort)
+        packed = pack_padded_sequence(seq_, lens_sorted, batch_first=True)
+        output, _ = self.fusion_bilstm(packed)
+        e, _ = pad_packed_sequence(output, batch_first=True)
+        e = e.contiguous()
+        e = torch.index_select(e, 0, lens_argsort_argsort)  # B x m x 2l
+        e = self.dropout(e)
+        return e
+
 class DynamicDecoder(nn.Module):
 
     def __init__(self, input_size, hidden_dim, maxout_pool_size, max_steps, dropout_ratio=0.0):
@@ -196,20 +216,12 @@ class CoattentionModel(nn.Module):
         self.encoder = Encoder(hidden_dim, emb_matrix, dropout_ratio)
 
         self.q_proj = nn.Linear(hidden_dim, hidden_dim)
-        self.temporal_fusion = nn.LSTM(3 * hidden_dim, hidden_dim, batch_first=True, bidirectional=True)
+        self.fusion_bilstm = FusionBiLSTM(hidden_dim, dropout_ratio)
         self.dynamic_decoder = DynamicDecoder(4 * hidden_dim, hidden_dim, maxout_pool_size, max_dec_steps, dropout_ratio)
         self.dropout = nn.Dropout(p=dropout_ratio)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    def _lengths_to_mask(self, lengths, max_len):
-        """Convert lengths to boolean mask."""
-        return torch.arange(max_len).unsqueeze(0).to(lengths.device) < lengths.unsqueeze(1)
-
-    def forward(self, d_seq, d_lens, q_seq, q_lens, span=None):
-        # Convert lengths to masks
-        d_mask = self._lengths_to_mask(d_lens, d_seq.size(1))
-        q_mask = self._lengths_to_mask(q_lens, q_seq.size(1))
-        
+    def forward(self, d_seq, d_mask, q_seq, q_mask, span=None):
         # Call encoder with masks
         D, Q = self.encoder(d_seq, d_mask, q_seq, q_mask)
 
@@ -232,16 +244,10 @@ class CoattentionModel(nn.Module):
         C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D) # B x 2l x m+1
         C_D_t = C_D.transpose(1, 2)  # B x m + 1 x 2l
 
-        # Fusion of temporal information to the coattention context via a bidirectional LSTM
+        #fusion BiLSTM
         bilstm_in = torch.cat((C_D_t, D), 2) # B x m + 1 x 3l
-        # Exclude the sentinel vector from further computation
-        bilstm_in = bilstm_in[:, :-1, :]
-        packed_bilstm_in = pack_padded_sequence(bilstm_in, lengths=d_lens.cpu(), batch_first=True, enforce_sorted=False)
-        packed_U, (_) = self.temporal_fusion(packed_bilstm_in)
-        U, (_) = pad_packed_sequence(packed_U, batch_first=True)
-        
-        b, seq_len, hidden_dim = U.shape
-        context_pad_mask = self._lengths_to_mask(d_lens, seq_len).float()
+        bilstm_in = self.dropout(bilstm_in)
+        U = self.fusion_bilstm(bilstm_in, d_mask) #B x m x 2l
 
-        loss, start_pred, end_pred = self.dynamic_decoder(U, context_pad_mask, span)
+        loss, start_pred, end_pred = self.dynamic_decoder(U, d_mask, span)
         return loss, start_pred, end_pred
