@@ -103,7 +103,7 @@ class GloVeEmbeddings:
     def _add_word(self, word: str, vector: np.ndarray) -> None:
         """Add word and its embedding vector to the vocabulary."""
         if word == self.UNK_TOKEN:
-            idx = 0
+            idx = 1
             self.word_to_idx[word] = idx
             self.idx_to_word[idx] = word
 
