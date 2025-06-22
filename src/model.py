@@ -230,9 +230,6 @@ class CoattentionModel(nn.Module):
     def forward(self, d_seq, d_mask, q_seq, q_mask, d_lens, span=None):
         # Call encoder with masks
         D, Q = self.encoder(d_seq, d_mask, q_seq, q_mask)
-        
-        # project q
-        Q = torch.tanh(self.q_proj(Q.view(-1, self.hidden_dim))).view(Q.size()) #B x n + 1 x l
 
         # Co attention
         D_t = D.transpose(1, 2) #B x l x m + 1
