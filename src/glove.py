@@ -92,6 +92,8 @@ class GloVeEmbeddings:
             # PAD token gets zero embedding
             if token == self.PAD_TOKEN:
                 vector = np.zeros(self.embedding_dim, dtype=np.float32)
+            elif token == self.UNK_TOKEN:
+                vector = np.zeros(self.embedding_dim, dtype=np.float32)
             else:
                 # Other special tokens get random embeddings
                 vector = np.random.normal(0, 0.1, self.embedding_dim).astype(np.float32)
