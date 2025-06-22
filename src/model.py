@@ -246,24 +246,20 @@ class CoattentionModel(nn.Module):
         # Call encoder with masks
         D, Q = self.encoder(d_seq, d_mask, q_seq, q_mask)
 
-        # Co attention
-        D_t = D.transpose(1, 2) #B x l x m + 1
-        L = torch.bmm(Q, D_t) # L = B x n + 1 x m + 1
+        #Affinity matrix
+        L = torch.bmm(Q, torch.transpose(D, 1, 2)) 
 
-        # Attention weights for question
-        A_Q_ = torch.softmax(L, dim=1) # B x n + 1 x m + 1
-        A_Q = A_Q_.transpose(1, 2) # B x m + 1 x n + 1
-        C_Q = torch.bmm(D_t, A_Q) # (B x l x m + 1) x (B x m x n + 1) => B x l x n + 1
+        #Attention weights
+        AQ = functional.softmax(L, dim=1)         
+        AD = functional.softmax(torch.transpose(L, 1, 2), dim=1)  
 
-        # Attention weights for document
-        Q_t = Q.transpose(1, 2)  # B x l x n + 1
-        A_D = torch.softmax(L, dim=2)  # B x n + 1 x m + 1
-        
-        C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D) # B x 2l x m+1
-        C_D_t = C_D.transpose(1, 2)  # B x m + 1 x 2l
+        #Context Summaries
+        CQ = torch.bmm(AQ, D) 
+        Q_combined = torch.cat([Q, CQ], dim=2)   
+        CD = torch.bmm(AD, Q_combined)
         
         # Fusion BiLSTM
-        bilstm_in = torch.cat((C_D_t, D), 2) # B x m + 1 x 3l
+        bilstm_in = torch.cat((CD, D), 2) 
         bilstm_in = self.dropout(bilstm_in)
         U = self.bilstm(bilstm_in, d_mask) #B x m x 2l
 
