@@ -107,6 +107,11 @@ class GloVeEmbeddings:
             self.word_to_idx[word] = idx
             self.idx_to_word[idx] = word
 
+        if word == self.PAD_TOKEN:
+            idx = 0
+            self.word_to_idx[word] = idx
+            self.idx_to_word[idx] = word
+
         if word not in self.word_to_idx:
             idx = len(self.word_to_idx)
             self.word_to_idx[word] = idx
