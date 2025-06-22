@@ -63,15 +63,17 @@ class FusionBiLSTM(nn.Module):
         self.dropout = nn.Dropout(p=dropout_ratio)
 
     def forward(self, seq, mask):
-        lens = torch.sum(mask, 1)
-        lens_sorted, lens_argsort = torch.sort(lens, 0, True)
+        lens = torch.sum(mask, dim=1).to(dtype=torch.int64)  
+        lens_sorted, lens_argsort = torch.sort(lens.to(seq.device), descending=True)
         _, lens_argsort_argsort = torch.sort(lens_argsort, 0)
+        lens_argsort_argsort = lens_argsort_argsort.to(seq.device)
+        
         seq_ = torch.index_select(seq, 0, lens_argsort)
-        packed = pack_padded_sequence(seq_, lens_sorted, batch_first=True)
+        packed = pack_padded_sequence(seq_, lens_sorted.cpu(), batch_first=True)  
         output, _ = self.fusion_bilstm(packed)
         e, _ = pad_packed_sequence(output, batch_first=True)
         e = e.contiguous()
-        e = torch.index_select(e, 0, lens_argsort_argsort)  # B x m x 2l
+        e = torch.index_select(e, 0, lens_argsort_argsort.to(seq.device)) 
         e = self.dropout(e)
         return e
 
