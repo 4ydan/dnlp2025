@@ -213,59 +213,6 @@ class GloVeEmbeddings:
         idx = self.word_to_index(word)
         return self.embeddings[idx]
     
-    def build_vocab_from_squad(self, squad_data: List[Dict]) -> set:
-        """
-        Build vocabulary from SQuAD dataset.
-        
-        Args:
-            squad_data: List of SQuAD examples with 'context', 'question', 'answers'
-            
-        Returns:
-            Set of unique words in the dataset
-        """
-        vocab = set()
-        
-        for example in squad_data:
-            # Add words from context
-            context_words = example['context'].lower().split()
-            vocab.update(context_words)
-            
-            # Add words from question
-            question_words = example['question'].lower().split()
-            vocab.update(question_words)
-            
-            # Add words from answers
-            answer_texts = example.get('answers', {}).get('text', [])
-            for answer_text in answer_texts:
-                answer_words = answer_text.lower().split()
-                vocab.update(answer_words)
-        
-        self.logger.info(f"Built vocabulary with {len(vocab)} unique words from SQuAD data")
-        return vocab
-    
-    def create_coattention_inputs(self, context: str, question: str, 
-                                max_context_len: int = 400, 
-                                max_question_len: int = 30) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Create inputs for coattention model from context and question.
-        
-        Args:
-            context: Context paragraph
-            question: Question text
-            max_context_len: Maximum context length
-            max_question_len: Maximum question length
-            
-        Returns:
-            Tuple of (context_embeddings, question_embeddings)
-        """
-        context_indices = self.encode_text(context, max_context_len)
-        question_indices = self.encode_text(question, max_question_len)
-        
-        context_embeddings = self.embeddings[context_indices]
-        question_embeddings = self.embeddings[question_indices]
-        
-        return context_embeddings, question_embeddings 
-    
     def get_vocab_info(self) -> Dict:
         """Get vocabulary information."""
         return {
@@ -276,35 +223,3 @@ class GloVeEmbeddings:
             'start_idx': self.word_to_idx[self.START_TOKEN],
             'end_idx': self.word_to_idx[self.END_TOKEN]
         }
-
-# Example usage for SQuAD dataset
-if __name__ == "__main__":
-    # Initialize GloVe embeddings
-    glove = GloVeEmbeddings(embedding_dim=300)
-    
-    # Example SQuAD data structure
-    squad_examples = [
-        {
-            'context': 'The Amazon rainforest is a moist broadleaf forest.',
-            'question': 'What type of forest is the Amazon?',
-            'answers': [{'text': 'moist broadleaf forest'}]
-        }
-    ]
-    
-    # Method 1: Load all embeddings (memory intensive)
-    # glove.load_glove_embeddings('path/to/glove.6B.300d.txt')
-    
-    # Method 2: Build vocab from SQuAD first, then load filtered embeddings (recommended)
-    vocab = glove.build_vocab_from_squad(squad_examples)
-    # glove.load_glove_embeddings('path/to/glove.6B.300d.txt', vocab=vocab)
-    
-    # Get embedding matrix for neural network
-    # embedding_matrix = glove.get_embedding_matrix()
-    
-    # Create inputs for coattention model
-    # context_emb, question_emb = glove.create_coattention_inputs(
-    #     squad_examples[0]['context'], 
-    #     squad_examples[0]['question']
-    # )
-    
-    print("GloVe class ready for SQuAD dataset!")

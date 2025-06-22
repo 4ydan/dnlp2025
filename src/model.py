@@ -55,27 +55,42 @@ class Encoder(nn.Module):
         
         return D, Q
     
-class FusionBiLSTM(nn.Module):
+class BiLSTM(nn.Module):
     def __init__(self, hidden_dim, dropout_ratio):
-        super(FusionBiLSTM, self).__init__()
-        self.fusion_bilstm = nn.LSTM(3 * hidden_dim, hidden_dim, 1, batch_first=True,
-                                     bidirectional=True, dropout=dropout_ratio)
+        super(BiLSTM, self).__init__()
+        self.fusion_bilstm = nn.LSTM(3 * hidden_dim, hidden_dim, 1, batch_first=True, bidirectional=True)
         self.dropout = nn.Dropout(p=dropout_ratio)
 
     def forward(self, seq, mask):
         lens = torch.sum(mask, dim=1).to(dtype=torch.int64)  
+        
+        # Sort sequences by length in descending order for efficient packed processing
+        # lens_sorted: lengths in descending order
+        # lens_argsort: indices that would sort the original lengths
         lens_sorted, lens_argsort = torch.sort(lens.to(seq.device), descending=True)
         _, lens_argsort_argsort = torch.sort(lens_argsort, 0)
         lens_argsort_argsort = lens_argsort_argsort.to(seq.device)
         
+        # Reorder sequences according to sorted lengths (longest first)
         seq_ = torch.index_select(seq, 0, lens_argsort)
-        packed = pack_padded_sequence(seq_, lens_sorted.cpu(), batch_first=True)  
-        output, _ = self.fusion_bilstm(packed)
-        e, _ = pad_packed_sequence(output, batch_first=True)
-        e = e.contiguous()
-        e = torch.index_select(e, 0, lens_argsort_argsort.to(seq.device)) 
-        e = self.dropout(e)
-        return e
+        
+        # Pack sequences for efficient LSTM processing (skips padding tokens)
+        packed_input = pack_padded_sequence(seq_, lens_sorted.cpu(), batch_first=True)  
+        
+        # Process through bidirectional LSTM
+        packed_U, _ = self.fusion_bilstm(packed_input)
+        
+        # Unpack the LSTM output back to padded sequences
+        U, _ = pad_packed_sequence(packed_U, batch_first=True)
+        U = U.contiguous()
+
+        # Restore original batch order (undo the length-based sorting)
+        U = torch.index_select(U, 0, lens_argsort_argsort.to(seq.device)) 
+        
+        # Apply dropout for regularization
+        U = self.dropout(U)
+
+        return U
 
 class DynamicDecoder(nn.Module):
 
@@ -218,7 +233,7 @@ class CoattentionModel(nn.Module):
         self.encoder = Encoder(hidden_dim, emb_matrix, dropout_ratio)
 
         self.q_proj = nn.Linear(hidden_dim, hidden_dim)
-        self.fusion_bilstm = FusionBiLSTM(hidden_dim, dropout_ratio)
+        self.bilstm = BiLSTM(hidden_dim, dropout_ratio)
         self.dynamic_decoder = DynamicDecoder(4 * hidden_dim, hidden_dim, maxout_pool_size, max_dec_steps, dropout_ratio)
         self.dropout = nn.Dropout(p=dropout_ratio)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -246,10 +261,11 @@ class CoattentionModel(nn.Module):
         
         C_D = torch.bmm(torch.cat((Q_t, C_Q), 1), A_D) # B x 2l x m+1
         C_D_t = C_D.transpose(1, 2)  # B x m + 1 x 2l
-        #fusion BiLSTM
+        
+        # Fusion BiLSTM
         bilstm_in = torch.cat((C_D_t, D), 2) # B x m + 1 x 3l
         bilstm_in = self.dropout(bilstm_in)
-        U = self.fusion_bilstm(bilstm_in, d_mask) #B x m x 2l
+        U = self.bilstm(bilstm_in, d_mask) #B x m x 2l
 
         _, seq_len, _ = U.shape
         context_pad_mask = self._lengths_to_mask(d_lens, seq_len).float()

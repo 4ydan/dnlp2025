@@ -23,8 +23,6 @@ class DCNConfig:
     
     # Model architecture
     hidden_dim: int = 200
-    embedding_dim: int = 300
-    decoding_steps: int = 4
     max_dec_steps: int = 4
     maxout_pool_size: int = 16
     
@@ -39,9 +37,9 @@ class DCNConfig:
     # Logging and checkpointing
     print_frequency: int = 100 # Print every 100 iterations
     eval_frequency: int = 1 # Evaluate every epoch
-    skip_frequency = 1  # Train every 10th batch (skip 90%)
-    # config.skip_frequency = 1  # Train on all batches (no skipping)
+    skip_frequency = 1  # Train on all batches (no skipping)
     # config.skip_frequency = 2  # Train every 2nd batch (skip 50%)
+    # config.skip_frequency = 5  # Train on 80%
     
     # Optional configurations
     num_workers: int = 4

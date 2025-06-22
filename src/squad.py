@@ -19,16 +19,16 @@ class SquadDataset(Dataset):
         """
         constructor function
         """
+        print(f"🚀 Initializing SquadDataset for {split} split...")
+
         super(SquadDataset, self).__init__()
         
         self.config = DCNConfig()
+        self.word2idx = word2idx
         self.context_data = []
         self.question_data = []
         self.answer_data = []
         self.answer_span_data = []
-        
-        # Use the global word2idx dictionary from your preprocessing
-        self.word2idx = word2idx
 
         # load squad dataset from huggingface
         if split not in ["train", "validation"]:
@@ -49,6 +49,8 @@ class SquadDataset(Dataset):
 
         # Process answer spans to convert from character indices to token indices
         self.answer_span_data = [self._get_token_span(example) for example in squad_dataset]
+
+        print(f"✅ SquadDataset initialization complete! Loaded {len(self.context_data)} examples for {split} split.")
 
     def __len__(self):
         return len(self.answer_span_data)
