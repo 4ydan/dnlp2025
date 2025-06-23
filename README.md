@@ -22,6 +22,6 @@ https://huggingface.co/datasets/rajpurkar/squad
 - A Context has multiple questions.
 - A Question has exactly 3 answers (which can be 3 times the same).
 
-  ## Reference
+## Reference
 
-  - https://github.com/atulkum/co-attention
+- https://github.com/atulkum/co-attention
